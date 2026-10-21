@@ -21,3 +21,4 @@ Tiam removes its own startup entry and installed copy, so nothing is left behind
 
 - Needs Windows 11 with **Show my taskbar on all displays** turned on (Settings > Personalization > Taskbar).
 - Icons hidden behind the **^** arrow are not shown.
+- To hide Tiam's own icon, open `Tiam.exe` again and choose **Hide tray icon**.

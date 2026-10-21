@@ -8,8 +8,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("Tiam")]
 [assembly: AssemblyProduct("Tiam - tray icons on all monitors")]
 [assembly: AssemblyDescription("Shows the Windows 11 tray icons on every taskbar")]
-[assembly: AssemblyVersion("1.0.4.0")]
-[assembly: AssemblyFileVersion("1.0.4.0")]
+[assembly: AssemblyVersion("1.0.5.0")]
+[assembly: AssemblyFileVersion("1.0.5.0")]
 
 // The app's own tray icon and menu, "Start with Windows" (installs a copy under %LOCALAPPDATA%\Programs\Tiam),
 // and the first-run tip. The exe is portable: nothing is written until the user turns on Start with Windows.
@@ -45,8 +45,28 @@ static partial class Tiam
         return d;
     }
 
+    static bool IconHidden()
+    {
+        using (var k = Registry.CurrentUser.OpenSubKey(AppKey))
+        {
+            object v = k == null ? null : k.GetValue("HideIcon");
+            return v is int && (int)v == 1;
+        }
+    }
+
+    static void SetIconHidden(bool hide)
+    {
+        using (var k = Registry.CurrentUser.CreateSubKey(AppKey)) k.SetValue("HideIcon", hide ? 1 : 0);
+        Log("icon hidden " + hide);
+        if (!hide) { AddAppIcon(); return; }
+        RemoveAppIcon();
+        MessageBox(ownerWnd, "Tiam keeps running without its tray icon.\n\nTo open this menu again, open Tiam.exe again." +
+            (AutoStartOn() ? "\nThe copy that starts with Windows is in " + InstallDir + "." : ""), "Tiam", 0x40);
+    }
+
     static void AddAppIcon()
     {
+        if (IconHidden()) return; // also covers the re-add after Explorer restarts
         var d = IconData();
         d.uFlags = 0x1 | 0x2 | 0x4 | 0x80; // MESSAGE | ICON | TIP | SHOWTIP
         d.uCallbackMessage = WM_TRAYICON; d.hIcon = appIcon; d.szTip = "Tiam: tray icons on all monitors";
@@ -130,6 +150,7 @@ static partial class Tiam
         AppendMenu(m, 0x1, IntPtr.Zero, "Tiam " + Version);                            // MF_GRAYED
         AppendMenu(m, 0x800, IntPtr.Zero, null);                                          // MF_SEPARATOR
         AppendMenu(m, AutoStartOn() ? 0x8u : 0u, new IntPtr(1), "Start with Windows");   // MF_CHECKED
+        AppendMenu(m, IconHidden() ? 0x8u : 0u, new IntPtr(3), "Hide tray icon");
         AppendMenu(m, 0, new IntPtr(2), "Quit");
         SetForegroundWindow(ownerWnd);
         int cmd = TrackPopupMenuEx(m, 0x100 | 0x2 | 0x10000, p.X, p.Y, ownerWnd, IntPtr.Zero); // RETURNCMD | RIGHTBUTTON | WORKAREA
@@ -139,6 +160,7 @@ static partial class Tiam
         try
         {
             if (cmd == 1) SetAutoStart(!AutoStartOn());
+            else if (cmd == 3) SetIconHidden(!IconHidden());
             else if (cmd == 2) Quit();
         }
         catch (Exception e)
