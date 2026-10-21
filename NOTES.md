@@ -51,3 +51,9 @@ Known limits: icons whose app never re-registers (NVIDIA Settings until next log
 callback) cannot be right-clicked while the primary monitor is covered. EarTrumpet ignores the first click
 after its flyout closed. KeePassXC's tray menu did not show even for a real click on this PC. Explorer restart
 is handled in code (re-find tray, re-broadcast) but untested.
+
+Main-tray drag (1.0.6): Explorer's own icon-drag code calls SetWindowPos(FindWindow("Shell_TrayWnd")) about every
+16 ms and matches the drop against that window. A hidden twin with the taskbar's exact rect made drags fail. The
+helper is now zero-size at the taskbar corner, forwards those SetWindowPos requests to Explorer's taskbar, and
+steps below it while the left button is down on the main taskbar. UIA can report tray buttons stretching to the
+screen edge; buttons are clipped at the next one (fixes hover/slot mapping).

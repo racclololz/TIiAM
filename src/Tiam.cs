@@ -140,6 +140,16 @@ static partial class Tiam
                 s.Items.Add(it);
             }
             s.Items.Sort(delegate (Item a, Item b) { return a.Btn.L.CompareTo(b.Btn.L); });
+            // UIA sometimes reports a button stretching to the screen edge (seen after a tray drag): clip each
+            // button at the next one, and the last one to the usual width
+            var widths = s.Items.ConvertAll(delegate (Item i) { return i.Btn.W; });
+            widths.Sort();
+            int usual = widths.Count > 0 ? widths[widths.Count / 2] : 0;
+            for (int i = 0; i < s.Items.Count; i++)
+            {
+                int limit = i + 1 < s.Items.Count ? s.Items[i + 1].Btn.L : s.Items[i].Btn.L + usual;
+                if (s.Items[i].Btn.R > limit) s.Items[i].Btn.R = limit;
+            }
             if (hookWnd != IntPtr.Zero) MatchRecords(tray, s.Items);
         }
         var secHwnds = new List<IntPtr>();
@@ -346,7 +356,8 @@ static partial class Tiam
         }
         RECT r = SlotRect(o, o.Hover);
         int m = Math.Max(2, (int)(4 * o.Scale));
-        SetWindowPos(o.HoverWnd, HWND_TOPMOST, r.L + m, r.T + m, r.W - 2 * m, r.H - 2 * m, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        bool ok = SetWindowPos(o.HoverWnd, HWND_TOPMOST, r.L + m, r.T + m, r.W - 2 * m, r.H - 2 * m, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        Log("hover slot " + o.Hover + " at " + (r.L + m) + "," + (r.T + m) + " ok=" + ok + " visible=" + IsWindowVisible(o.HoverWnd));
     }
 
     static bool IsOurs(IntPtr h)

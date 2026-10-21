@@ -84,6 +84,7 @@ static partial class Tiam
         wmTaskbarCreated = RegisterWindowMessage("TaskbarCreated");
         KeepOnTop();
         SetTimer(hookWnd, new IntPtr(1), 100, IntPtr.Zero);
+        SetTimer(hookWnd, new IntPtr(3), 30, IntPtr.Zero);
         Log("tray hook " + hookWnd + " explorer " + explorerTray);
         Broadcast();
     }
@@ -146,6 +147,7 @@ static partial class Tiam
         heldDeletes.Clear();
     }
 
+
     static void KeepOnTop()
     {
         IntPtr ex = FindExplorerTray();
@@ -157,9 +159,11 @@ static partial class Tiam
         }
         var r = new RECT();
         if (Answering()) r = answerTaskbar; // see PostClick
-        else if (ex != IntPtr.Zero) GetWindowRect(ex, out r);
+        else if (ex != IntPtr.Zero) { GetWindowRect(ex, out r); r.R = r.L; r.B = r.T; } // zero size at the taskbar corner: a full-size twin broke dragging icons on the main tray
         RECT mine; GetWindowRect(hookWnd, out mine);
-        if (FindWindowEx(IntPtr.Zero, IntPtr.Zero, "Shell_TrayWnd", null) != hookWnd || !Same(mine, r))
+        if (yielding && (Environment.TickCount - yieldUntil < 0 || (GetAsyncKeyState(1) & 0x8000) != 0)) { } // drag in progress: stay below
+        else if (yielding) { yielding = false; SetWindowPos(hookWnd, HWND_TOPMOST, r.L, r.T, r.W, r.H, SWP_NOACTIVATE); Log("back on top"); }
+        else if (FindWindowEx(IntPtr.Zero, IntPtr.Zero, "Shell_TrayWnd", null) != hookWnd || !Same(mine, r))
             SetWindowPos(hookWnd, HWND_TOPMOST, r.L, r.T, r.W, r.H, SWP_NOACTIVATE);
         if (IsWindowVisible(hookWnd))
             SetWindowPos(hookWnd, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW);
@@ -167,8 +171,45 @@ static partial class Tiam
         ReleaseHeldDeletes();
     }
 
+    // Explorer itself moves "the taskbar" with SetWindowPos(FindWindow("Shell_TrayWnd")) while tray icons are
+    // dragged, and checks the drop against that window, which is this one. Pass the request on to Explorer's
+    // taskbar and step below it until the drag ends, so FindWindow returns Explorer's own window again.
+    static bool yielding;
+    static int yieldUntil;
+
+    // A drag starts with a press on the main taskbar and Explorer looks the window up when the drag begins, so
+    // step aside as soon as the left button goes down there (30 ms poll), not when the first move request arrives.
+    static void YieldOnTrayPress()
+    {
+        if ((GetAsyncKeyState(1) & 0x8000) == 0 || explorerTray == IntPtr.Zero) return;
+        POINT c; GetCursorPos(out c);
+        RECT t; GetWindowRect(explorerTray, out t);
+        if (!Contains(t, c.X, c.Y)) return;
+        if (!yielding)
+        {
+            SetWindowPos(hookWnd, explorerTray, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            Log("stepping aside: button down on the main taskbar");
+        }
+        yielding = true; yieldUntil = Environment.TickCount + 500;
+    }
+
+    static void ForwardTaskbarMove(IntPtr wp)
+    {
+        IntPtr after = Marshal.ReadIntPtr(wp, 8);
+        uint flags = (uint)Marshal.ReadInt32(wp, 32);
+        if (explorerTray == IntPtr.Zero) return;
+        if (after != explorerTray)
+            SetWindowPos(explorerTray, after, Marshal.ReadInt32(wp, 16), Marshal.ReadInt32(wp, 20), Marshal.ReadInt32(wp, 24), Marshal.ReadInt32(wp, 28), flags | 0x4000); // SWP_ASYNCWINDOWPOS
+        Marshal.WriteIntPtr(wp, 8, explorerTray); // this window: directly below Explorer's taskbar
+        Marshal.WriteInt32(wp, 32, (int)(((flags | SWP_NOMOVE | SWP_NOSIZE) & ~SWP_NOZORDER) & ~SWP_SHOWWINDOW));
+        if (!yielding) Log("stepping aside for a taskbar move by another program");
+        yielding = true; yieldUntil = Environment.TickCount + 1500;
+    }
+
     static IntPtr HookProc(IntPtr h, uint m, IntPtr w, IntPtr l)
     {
+        if (m == 0x46 && InSendMessage()) ForwardTaskbarMove(l); // WM_WINDOWPOSCHANGING from another thread
+        if (m == WM_TIMER && (long)w == 3) { YieldOnTrayPress(); return IntPtr.Zero; }
         if (m == WM_TIMER) { KeepOnTop(); return IntPtr.Zero; }
         if (m == WM_COPYDATA && l != IntPtr.Zero)
         {

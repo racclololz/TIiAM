@@ -8,8 +8,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("Tiam")]
 [assembly: AssemblyProduct("Tiam - tray icons on all monitors")]
 [assembly: AssemblyDescription("Shows the Windows 11 tray icons on every taskbar")]
-[assembly: AssemblyVersion("1.0.5.0")]
-[assembly: AssemblyFileVersion("1.0.5.0")]
+[assembly: AssemblyVersion("1.0.6.0")]
+[assembly: AssemblyFileVersion("1.0.6.0")]
 
 // The app's own tray icon and menu, "Start with Windows" (installs a copy under %LOCALAPPDATA%\Programs\Tiam),
 // and the first-run tip. The exe is portable: nothing is written until the user turns on Start with Windows.
