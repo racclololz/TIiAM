@@ -1,11 +1,21 @@
-# TIiAM handoff
+# Tiam handoff
 
 Goal: show the Windows 11 tray icons on secondary taskbars, clickable, popups on the clicked monitor, and keep
 working while a fullscreen app covers the primary monitor (the main use case).
 
-Build: `build.ps1` (in-box .NET Framework csc, C# 5, no downloads). Output `bin\Tiam.exe`. Stop the running
-app first or the build fails on the locked exe. Run with `-log` to write `%TEMP%\tiam.log`.
-Autostart: `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `TIiAM`.
+Build: `build.ps1` (in-box .NET Framework csc, C# 5, no downloads). Output `bin\Tiam.exe` with
+`assets\tiam.ico` (DIB entries; GDI+ and some loaders misread PNG entries below 256 px). Stop the running app
+first or the build fails on the locked exe. Run with `-log` to write `%TEMP%\tiam.log`.
+
+Distribution (`App.cs`): one portable exe, .NET Framework 4.8 ships with Windows 11. Nothing is written until the
+user picks "Start with Windows": that copies the exe to `%LOCALAPPDATA%\Programs\Tiam\Tiam.exe` and sets
+`HKCU\...\Run\Tiam`. Unticking removes the Run value (and the copy when not running from it); Quit from the
+installed copy with autostart off deletes the folder via a short cmd. A hand-started newer exe refreshes the
+installed copy. The app has its own tray icon (owner window `TiamWnd`/"Tiam"); Windows 11 hides new icons
+behind "^", so starting the exe a second time posts `Tiam-ShowMenu` to the running copy, which opens the menu
+at the cursor. First run shows a balloon (`HKCU\Software\Tiam\Welcomed`). Setting `IsPromoted` under
+`HKCU\Control Panel\NotifyIconSettings` does not apply until Explorer restarts, so it is not used.
+Gotcha: `DefWindowProc` must be the W import, or window titles are truncated to one character.
 
 Design (src/):
 - `TrayHook.cs`: a hidden window of class `Shell_TrayWnd`, kept above Explorer's in z-order (100 ms timer), so

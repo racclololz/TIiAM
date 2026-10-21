@@ -17,6 +17,18 @@ static partial class Tiam
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct WNDCLASSEX { public int cbSize; public uint style; public WndProcDelegate proc; public int cbClsExtra, cbWndExtra; public IntPtr hInstance, hIcon, hCursor, hbrBackground; public string menu, cls; public IntPtr hIconSm; }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct NOTIFYICONDATA
+    {
+        public int cbSize; public IntPtr hWnd; public uint uID, uFlags, uCallbackMessage; public IntPtr hIcon;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string szTip;
+        public uint dwState, dwStateMask;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string szInfo;
+        public uint uVersion;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string szInfoTitle;
+        public uint dwInfoFlags; public Guid guidItem; public IntPtr hBalloonIcon;
+    }
+
     delegate IntPtr WndProcDelegate(IntPtr h, uint m, IntPtr w, IntPtr l);
     delegate bool EnumProc(IntPtr h, IntPtr l);
 
@@ -32,7 +44,7 @@ static partial class Tiam
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern ushort RegisterClassEx(ref WNDCLASSEX c);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(uint ex, string cls, string name, uint style, int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr inst, IntPtr p);
     [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
-    [DllImport("user32.dll")] static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] static extern int GetMessage(out MSG m, IntPtr h, uint a, uint b);
     [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG m);
     [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG m);
@@ -56,6 +68,15 @@ static partial class Tiam
     [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(uint pid);
     [DllImport("user32.dll")] static extern bool SetLayeredWindowAttributes(IntPtr h, uint key, byte alpha, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterWindowMessage(string s);
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern bool Shell_NotifyIcon(uint msg, ref NOTIFYICONDATA d);
+    [DllImport("user32.dll")] static extern IntPtr CreatePopupMenu();
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool AppendMenu(IntPtr m, uint flags, IntPtr id, string text);
+    [DllImport("user32.dll")] static extern int TrackPopupMenuEx(IntPtr m, uint flags, int x, int y, IntPtr hwnd, IntPtr p);
+    [DllImport("user32.dll")] static extern bool DestroyMenu(IntPtr m);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern void PostQuitMessage(int code);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr LoadImage(IntPtr inst, IntPtr name, uint type, int cx, int cy, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int MessageBox(IntPtr h, string text, string caption, uint type);
     [DllImport("shcore.dll")] static extern int GetDpiForMonitor(IntPtr m, int type, out uint x, out uint y);
     [DllImport("gdi32.dll")] static extern IntPtr CreateSolidBrush(uint c);
     [DllImport("dwmapi.dll")] static extern int DwmRegisterThumbnail(IntPtr dst, IntPtr src, out IntPtr id);

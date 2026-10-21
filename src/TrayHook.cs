@@ -16,8 +16,9 @@ static partial class Tiam
     static uint wmTaskbarCreated;
     static int rebroadcastAt;
     static Rec answerRec;
-    static RECT answerRect;
+    static RECT answerRect, answerTaskbar;
     static int answerUntil;
+    static uint answerPid;
     const int TRAY_MAGIC = 0x34753423;
 
     static IntPtr FindExplorerTray()
@@ -113,7 +114,8 @@ static partial class Tiam
             if (ex != IntPtr.Zero) rebroadcastAt = Environment.TickCount + 2000; // Explorer restarted: its own broadcast may have reached it first
         }
         var r = new RECT();
-        if (ex != IntPtr.Zero) GetWindowRect(ex, out r);
+        if (Environment.TickCount - answerUntil <= 0) r = answerTaskbar; // see PostClick
+        else if (ex != IntPtr.Zero) GetWindowRect(ex, out r);
         RECT mine; GetWindowRect(hookWnd, out mine);
         if (FindWindowEx(IntPtr.Zero, IntPtr.Zero, "Shell_TrayWnd", null) != hookWnd || !Same(mine, r))
             SetWindowPos(hookWnd, HWND_TOPMOST, r.L, r.T, r.W, r.H, SWP_NOACTIVATE);
@@ -132,6 +134,15 @@ static partial class Tiam
             {
                 var cds = (COPYDATASTRUCT)Marshal.PtrToStructure(l, typeof(COPYDATASTRUCT));
                 long kind = cds.dwData.ToInt64();
+                // ABM_GETTASKBARPOS from the app just clicked on an overlay: fail it, so the app falls back to
+                // GetWindowRect(FindWindow("Shell_TrayWnd")), which is this window, now on the clicked taskbar.
+                // EarTrumpet places its flyout this way.
+                if (kind == 0 && cds.cbData >= 64 && Marshal.ReadInt32(cds.lpData, 40) == 5 &&
+                    Environment.TickCount - answerUntil <= 0 && (uint)Marshal.ReadInt32(cds.lpData, 56) == answerPid)
+                {
+                    Log("failed ABM_GETTASKBARPOS for pid " + answerPid);
+                    return IntPtr.Zero;
+                }
                 if (kind == 1 && cds.cbData >= 288)
                 {
                     if (DuringBroadcast(cds)) return new IntPtr(1);
@@ -145,6 +156,7 @@ static partial class Tiam
             }
             catch (Exception e) { Log("copydata error " + e.Message); }
         }
+        if (m == wmTaskbarCreated) return IntPtr.Zero; // our own broadcast also reaches this window
         if (m == WM_COPYDATA || m == WM_ACTIVATEAPP || m == WM_COMMAND || m >= WM_USER)
         {
             if (!IsWindow(explorerTray)) explorerTray = FindExplorerTray();

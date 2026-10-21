@@ -1,4 +1,4 @@
-// TIiAM: mirrors the primary taskbar tray icons onto secondary taskbars (Windows 11).
+// Tiam: mirrors the primary taskbar tray icons onto secondary taskbars (Windows 11).
 // Compiled with the in-box .NET Framework csc.exe (C# 5): no ?., no $"", no =>.
 // Layout: UI Automation lists the primary tray buttons. Pixels: a live DWM thumbnail of Explorer's taskbar,
 // which keeps rendering while a fullscreen app covers the primary monitor. Clicks: the icon's own callback
@@ -42,7 +42,20 @@ static partial class Tiam
     {
         bool created;
         var mtx = new Mutex(true, "Local\\TIiAM-single-instance", out created);
-        if (!created) return 0;
+        if (!created)
+        {
+            // starting it again opens the running copy's menu: Windows 11 often hides new tray icons behind "^"
+            IntPtr other = FindWindowEx(IntPtr.Zero, IntPtr.Zero, "TiamWnd", "Tiam");
+            if (other != IntPtr.Zero)
+            {
+                uint pid; GetWindowThreadProcessId(other, out pid);
+                AllowSetForegroundWindow(pid);
+                PostMessage(other, RegisterWindowMessage("Tiam-ShowMenu"), IntPtr.Zero, IntPtr.Zero);
+            }
+            else MessageBox(IntPtr.Zero, "Tiam is already running.", "Tiam", 0x40);
+            return 0;
+        }
+        wmShowMenu = RegisterWindowMessage("Tiam-ShowMenu");
         foreach (var a in args) if (a == "-log") log = true;
         logPath = Path.Combine(Path.GetTempPath(), "tiam.log");
         Log("start");
@@ -61,6 +74,8 @@ static partial class Tiam
         hc.cbSize = wc.cbSize; hc.proc = defProc; hc.hInstance = hInst; hc.hbrBackground = CreateSolidBrush(0xFFFFFF); hc.cls = "TiamHover";
         RegisterClassEx(ref hc);
         msgWnd = CreateWindowEx(0, "TiamWnd", "TiamMsg", 0, 0, 0, 0, 0, new IntPtr(-3), IntPtr.Zero, hInst, IntPtr.Zero);
+        CreateOwnerWindow();
+        RefreshInstalledCopy();
 
         SetTimer(msgWnd, new IntPtr(1), 250, IntPtr.Zero);
         var t = new Thread(Worker);
@@ -171,10 +186,11 @@ static partial class Tiam
         Snap s;
         lock (gate) { s = pending; pending = null; }
         if (s == null) return;
-        if (hookWnd == IntPtr.Zero && s.TrayHwnd != IntPtr.Zero) StartTrayHook(hInst); // only once Explorer's tray exists
+        if (hookWnd == IntPtr.Zero && s.TrayHwnd != IntPtr.Zero) { StartTrayHook(hInst); AddAppIcon(); } // only once Explorer's tray exists
         if (s.Items.Count == 0 && cur.Items.Count > 0 && s.TrayHwnd == cur.TrayHwnd) s.Items = cur.Items; // transient UIA miss
         cur = s;
         Layout();
+        if (iconAdded) WelcomeOnce();
     }
 
     static void Layout()
@@ -250,7 +266,10 @@ static partial class Tiam
 
     static void ApplyVisibility(Overlay o)
     {
-        bool show = o.Sec.Visible && cur.Items.Count > 0 && o.Pos.W > 0 && !TaskbarHiddenBehindApp(o);
+        // an auto-hidden taskbar slides off the screen: follow its live position, not the last scan
+        RECT live; GetWindowRect(o.Sec.Hwnd, out live);
+        bool inPlace = live.T == o.Sec.Rect.T && live.B <= MonitorRect(live, false).B;
+        bool show = o.Sec.Visible && inPlace && cur.Items.Count > 0 && o.Pos.W > 0 && !TaskbarHiddenBehindApp(o);
         if (show)
         {
             SetWindowPos(o.Hwnd, HWND_TOPMOST, o.Pos.L, o.Pos.T, o.Pos.W, o.Pos.H, SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -304,6 +323,7 @@ static partial class Tiam
     static IntPtr WndProcImpl(IntPtr h, uint m, IntPtr w, IntPtr l)
     {
         if (h == hookWnd && hookWnd != IntPtr.Zero) return HookProc(h, m, w, l);
+        if (h == ownerWnd && ownerWnd != IntPtr.Zero) return OwnerProc(h, m, w, l);
         if (h == msgWnd)
         {
             if (m == WM_APP)
@@ -361,7 +381,7 @@ static partial class Tiam
         Rec r = it.Rec;
         if (r != null && r.Callback != 0 && IsWindow(r.Hwnd))
         {
-            PostClick(r, kind, mirror);
+            PostClick(r, kind, mirror, ov);
             Log("click " + kind + " '" + it.Name.Replace("\n", " ") + "' via callback v" + r.Version);
             return;
         }
@@ -388,11 +408,13 @@ static partial class Tiam
     }
 
     // Same message sequence Explorer sends for a mouse click on a notification icon.
-    static void PostClick(Rec r, Kind kind, RECT mirror)
+    static void PostClick(Rec r, Kind kind, RECT mirror, Overlay ov)
     {
         uint pid; GetWindowThreadProcessId(r.Hwnd, out pid);
         AllowSetForegroundWindow(pid);
-        answerRec = r; answerRect = mirror; answerUntil = Environment.TickCount + 3000;
+        // for 3 s the hidden Shell_TrayWnd stands on the clicked taskbar, for apps that place popups from it
+        answerRec = r; answerRect = mirror; answerPid = pid; answerTaskbar = ov.Sec.Rect; answerUntil = Environment.TickCount + 3000;
+        SetWindowPos(hookWnd, HWND_TOPMOST, answerTaskbar.L, answerTaskbar.T, answerTaskbar.W, answerTaskbar.H, SWP_NOACTIVATE);
         POINT c; GetCursorPos(out c);
         var seq = new List<uint>();
         switch (kind)
