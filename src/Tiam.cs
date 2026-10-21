@@ -20,6 +20,7 @@ static partial class Tiam
         public IntPtr Hwnd, HoverWnd, Thumb, ThumbSrc;
         public THUMBPROPS ThumbProps; public bool ThumbSet;
         public int MaxClockW, ClockForR;
+        public string LastOrder;
         public Sec Sec; public RECT Pos; public int Hover = -1; public bool Shown, Tracking, IgnoreNextLeftUp; public float Scale = 1;
     }
     enum Kind { Left, Right, Middle, Double }
@@ -231,6 +232,8 @@ static partial class Tiam
             if (!Same(pos, o.Pos)) Log("layout scale=" + o.Scale + " pos=" + pos.L + "," + pos.T + "," + pos.R + "," + pos.B + " items=" + cur.Items.Count);
             bool moved = !Same(pos, o.Pos);
             o.Pos = pos;
+            string order = log ? string.Join("|", cur.Items.ConvertAll(delegate (Item i) { return i.Name; }).ToArray()) : null;
+            if (log && order != o.LastOrder) { moved = true; o.LastOrder = order; }
             if (moved && log)
                 for (int i = 0; i < cur.Items.Count; i++) { RECT sr = SlotRect(o, i); Log("  slot " + i + " x=" + (sr.L + sr.R) / 2 + " '" + cur.Items[i].Name.Replace("\n", " ") + "'"); }
             UpdateThumb(o);
@@ -461,7 +464,7 @@ static partial class Tiam
         uint pid; GetWindowThreadProcessId(r.Hwnd, out pid);
         AllowSetForegroundWindow(pid);
         // for 3 s the hidden Shell_TrayWnd stands on the clicked taskbar, for apps that place popups from it
-        answerRec = r; answerRect = mirror; answerPid = pid; answerTaskbar = ov.Sec.Rect; answerUntil = Environment.TickCount + 3000;
+        answerRec = r; answerRect = mirror; answerPid = pid; answerTaskbar = ov.Sec.Rect; answerMonitor = MonitorRect(ov.Sec.Rect, false); answerUntil = Environment.TickCount + 3000;
         SetWindowPos(hookWnd, HWND_TOPMOST, answerTaskbar.L, answerTaskbar.T, answerTaskbar.W, answerTaskbar.H, SWP_NOACTIVATE);
         PreMoveHiddenPopups(pid, ov);
         uint v = EffectiveVersion(r);

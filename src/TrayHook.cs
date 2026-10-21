@@ -47,7 +47,18 @@ static partial class Tiam
     static uint wmTaskbarCreated;
     static int rebroadcastAt;
     static Rec answerRec;
-    static RECT answerRect, answerTaskbar;
+    static RECT answerRect, answerTaskbar, answerMonitor;
+
+    // Steer an app to the clicked taskbar only shortly after the click, and only while the mouse is still on that
+    // monitor: a click on the real icon on the main monitor right after must behave normally.
+    static bool Answering()
+    {
+        if (Environment.TickCount - answerUntil > 0) return false;
+        POINT c; GetCursorPos(out c);
+        if (Contains(answerMonitor, c.X, c.Y)) return true;
+        answerUntil = Environment.TickCount - 1;
+        return false;
+    }
     static int answerUntil;
     static uint answerPid;
     const int TRAY_MAGIC = 0x34753423;
@@ -145,7 +156,7 @@ static partial class Tiam
             if (ex != IntPtr.Zero) rebroadcastAt = Environment.TickCount + 2000; // Explorer restarted: its own broadcast may have reached it first
         }
         var r = new RECT();
-        if (Environment.TickCount - answerUntil <= 0) r = answerTaskbar; // see PostClick
+        if (Answering()) r = answerTaskbar; // see PostClick
         else if (ex != IntPtr.Zero) GetWindowRect(ex, out r);
         RECT mine; GetWindowRect(hookWnd, out mine);
         if (FindWindowEx(IntPtr.Zero, IntPtr.Zero, "Shell_TrayWnd", null) != hookWnd || !Same(mine, r))
@@ -168,10 +179,8 @@ static partial class Tiam
                 // ABM_GETTASKBARPOS from the app just clicked on an overlay: fail it, so the app falls back to
                 // GetWindowRect(FindWindow("Shell_TrayWnd")), which is this window, now on the clicked taskbar.
                 // EarTrumpet places its flyout this way.
-                if (kind == 0 && cds.cbData >= 64 && Environment.TickCount - answerUntil <= 0)
-                    Log("appbar msg " + Marshal.ReadInt32(cds.lpData, 40) + " from pid " + (uint)Marshal.ReadInt32(cds.lpData, 56));
                 if (kind == 0 && cds.cbData >= 64 && Marshal.ReadInt32(cds.lpData, 40) == 5 &&
-                    Environment.TickCount - answerUntil <= 0 && (uint)Marshal.ReadInt32(cds.lpData, 56) == answerPid)
+                    Answering() && (uint)Marshal.ReadInt32(cds.lpData, 56) == answerPid)
                 {
                     Log("failed ABM_GETTASKBARPOS for pid " + answerPid);
                     return IntPtr.Zero;
@@ -261,7 +270,7 @@ static partial class Tiam
     {
         res = IntPtr.Zero;
         Rec a = answerRec;
-        if (a == null || Environment.TickCount - answerUntil > 0) return false;
+        if (a == null || !Answering()) return false;
         int msg = Marshal.ReadInt32(p, 4);
         var hwnd = new IntPtr(Marshal.ReadInt32(p, 16));
         uint uid = (uint)Marshal.ReadInt32(p, 20);

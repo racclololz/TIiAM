@@ -34,7 +34,9 @@ static partial class Tiam
 
     static void PollPopups()
     {
-        if (Environment.TickCount - relocUntil > 0) { KillTimer(msgWnd, new IntPtr(2)); return; }
+        POINT cp; GetCursorPos(out cp);
+        // stop once time is up or the mouse has left the clicked monitor (popups from there are not ours to move)
+        if (Environment.TickCount - relocUntil > 0 || !Contains(relocSecMon, cp.X, cp.Y)) { relocUntil = Environment.TickCount - 1; KillTimer(msgWnd, new IntPtr(2)); return; }
         var wins = new List<IntPtr>();
         EnumWindows(delegate (IntPtr h, IntPtr l) { if (IsWindowVisible(h)) wins.Add(h); return true; }, IntPtr.Zero);
         foreach (var h in wins)
