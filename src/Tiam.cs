@@ -18,6 +18,7 @@ static partial class Tiam
     class Overlay
     {
         public IntPtr Hwnd, HoverWnd, Thumb, ThumbSrc;
+        public THUMBPROPS ThumbProps; public bool ThumbSet;
         public Sec Sec; public RECT Pos; public int Hover = -1; public bool Shown, Tracking, IgnoreNextLeftUp; public float Scale = 1;
     }
     enum Kind { Left, Right, Middle, Double }
@@ -240,7 +241,7 @@ static partial class Tiam
             if (o.Thumb != IntPtr.Zero) DwmUnregisterThumbnail(o.Thumb);
             IntPtr id;
             if (DwmRegisterThumbnail(o.Hwnd, cur.TrayHwnd, out id) != 0) { o.Thumb = IntPtr.Zero; return; }
-            o.Thumb = id; o.ThumbSrc = cur.TrayHwnd;
+            o.Thumb = id; o.ThumbSrc = cur.TrayHwnd; o.ThumbSet = false;
         }
         RECT first = cur.Items[0].Btn, last = cur.Items[cur.Items.Count - 1].Btn;
         var p = new THUMBPROPS();
@@ -248,7 +249,9 @@ static partial class Tiam
         p.dst.R = o.Pos.W; p.dst.B = o.Pos.H;
         p.src.L = first.L - cur.Tray.L; p.src.T = first.T - cur.Tray.T; p.src.R = last.R - cur.Tray.L; p.src.B = last.B - cur.Tray.T;
         p.visible = 1;
+        if (o.ThumbSet && Same(p.src, o.ThumbProps.src) && Same(p.dst, o.ThumbProps.dst)) return;
         DwmUpdateThumbnailProperties(o.Thumb, ref p);
+        o.ThumbProps = p; o.ThumbSet = true;
     }
 
     // A fullscreen app on the secondary monitor hides its taskbar: probe the clock, which the overlay never covers.
@@ -272,8 +275,16 @@ static partial class Tiam
         bool show = o.Sec.Visible && inPlace && cur.Items.Count > 0 && o.Pos.W > 0 && !TaskbarHiddenBehindApp(o);
         if (show)
         {
-            SetWindowPos(o.Hwnd, HWND_TOPMOST, o.Pos.L, o.Pos.T, o.Pos.W, o.Pos.H, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-            ShowHover(o);
+            // touch the windows only when something changed: re-stacking them every tick made the hover highlight flicker
+            RECT now; GetWindowRect(o.Hwnd, out now);
+            bool moved = !o.Shown || !Same(now, o.Pos);
+            if (moved || TaskbarAbove(o))
+            {
+                SetWindowPos(o.Hwnd, HWND_TOPMOST, o.Pos.L, o.Pos.T, o.Pos.W, o.Pos.H, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                Log("raised bar (" + (moved ? "moved" : "taskbar was above") + ")");
+                o.Shown = true;
+                ShowHover(o);
+            }
         }
         else if (o.Shown)
         {
@@ -281,6 +292,13 @@ static partial class Tiam
             SetWindowPos(o.HoverWnd, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW);
         }
         o.Shown = show;
+    }
+
+    static bool TaskbarAbove(Overlay o)
+    {
+        for (IntPtr h = GetWindow(o.Hwnd, 3); h != IntPtr.Zero; h = GetWindow(h, 3)) // GW_HWNDPREV: windows above ours
+            if (h == o.Sec.Hwnd) return true;
+        return false;
     }
 
     // Screen rect of item i on overlay o.
