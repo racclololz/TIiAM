@@ -8,9 +8,14 @@ Shows your Windows 11 tray icons on the taskbar of every monitor. They work like
 2. If Windows warns you, click **More info**, then **Run anyway**.
 3. Open it again and choose **Start with Windows** to keep it after a restart.
 
-## Remove
+## Uninstall
 
-Open Tiam again, untick **Start with Windows**, then choose **Quit**.
+1. Open `Tiam.exe` again. Its menu appears.
+2. If **Start with Windows** is ticked, click it to untick it.
+3. Open `Tiam.exe` again and choose **Quit**.
+4. Delete the `Tiam.exe` you downloaded.
+
+Tiam removes its own startup entry and installed copy, so nothing is left behind.
 
 ## Good to know
 
