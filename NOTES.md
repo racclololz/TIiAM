@@ -33,6 +33,17 @@ Design (src/):
 - `Popups.cs`: for 4 s after a click, move popups that still open on the primary monitor (menus at once,
   flyouts once stable) and lift popups that overlap the secondary taskbar.
 
+Click details learned later:
+- NOTIFYICON_VERSION is sent once per icon (NIM_SETVERSION at creation). Apps running before Tiam that only send
+  NIM_MODIFY never reveal it. Versions are saved in `HKCU\Software\Tiam\IconVersions` (process|uID); unknown with
+  uID 0 is sent as version 4 (lParam is identical, wParam carries the anchor point). Sending v0 to a v4 app put
+  its right-click menu at 0,0 and, in apps that swallow the duplicate LBUTTONUP/NIN_SELECT, ate every 2nd click.
+- During a click the hidden Shell_TrayWnd stands on the clicked taskbar and ABM_GETTASKBARPOS from that app fails,
+  so apps that place flyouts from FindWindow("Shell_TrayWnd") use the clicked monitor. Hidden flyout-sized windows
+  of the app that sit by the primary taskbar are moved first (WPF shows a window at its old spot for a frame).
+- Bar anchor: widest secondary clock seen (clock width changes with seconds). Re-raise on EVENT_OBJECT_REORDER /
+  EVENT_SYSTEM_FOREGROUND when a taskbar covers the bar, plus a 250 ms check; never restack without need (flicker).
+
 Wire facts (Win11 25H2): WINNOTIFYICONIDENTIFIER cbSize field = 32; message 1 returns top-left, message 2
 returns width/height (not bottom-right). Monitor 2 is 100%, monitor 1 is 150%: keep everything PerMonitorV2.
 
