@@ -31,6 +31,8 @@ static partial class Tiam
 
     delegate IntPtr WndProcDelegate(IntPtr h, uint m, IntPtr w, IntPtr l);
     delegate bool EnumProc(IntPtr h, IntPtr l);
+    delegate void WinEventProc(IntPtr hook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
+    [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr mod, WinEventProc p, uint pid, uint tid, uint flags);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string name);
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc p, IntPtr l);

@@ -8,7 +8,38 @@ using System.Runtime.InteropServices;
 // touching the real tray, even when a fullscreen app covers it.
 static partial class Tiam
 {
-    class Rec { public IntPtr Hwnd; public uint Uid; public Guid Guid; public uint Callback; public uint Version; public string Tip = ""; }
+    class Rec { public IntPtr Hwnd; public uint Uid; public Guid Guid; public uint Callback; public uint Version; public bool VersionKnown; public string Tip = ""; }
+
+    // An icon's NOTIFYICON_VERSION is only sent once, when the app creates the icon. Apps that were running before
+    // Tiam and do not re-add on TaskbarCreated never send it again, so remember it per app and icon id.
+    static string VersionKey(Rec r)
+    {
+        uint pid; GetWindowThreadProcessId(r.Hwnd, out pid);
+        try { return System.Diagnostics.Process.GetProcessById((int)pid).ProcessName + "|" + r.Uid; } catch { return null; }
+    }
+
+    static void SetVersion(Rec r, uint ver)
+    {
+        r.Version = ver; r.VersionKnown = true;
+        string k = VersionKey(r);
+        if (k == null) return;
+        try { using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(AppKey + @"\IconVersions")) key.SetValue(k, (int)ver); } catch { }
+    }
+
+    static void LoadVersion(Rec r)
+    {
+        string k = VersionKey(r);
+        if (k == null) return;
+        try
+        {
+            using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(AppKey + @"\IconVersions"))
+            {
+                object v = key == null ? null : key.GetValue(k);
+                if (v is int) { r.Version = (uint)(int)v; r.VersionKnown = true; }
+            }
+        }
+        catch { }
+    }
 
     static readonly object recLock = new object();
     static readonly List<Rec> recs = new List<Rec>();
@@ -137,6 +168,8 @@ static partial class Tiam
                 // ABM_GETTASKBARPOS from the app just clicked on an overlay: fail it, so the app falls back to
                 // GetWindowRect(FindWindow("Shell_TrayWnd")), which is this window, now on the clicked taskbar.
                 // EarTrumpet places its flyout this way.
+                if (kind == 0 && cds.cbData >= 64 && Environment.TickCount - answerUntil <= 0)
+                    Log("appbar msg " + Marshal.ReadInt32(cds.lpData, 40) + " from pid " + (uint)Marshal.ReadInt32(cds.lpData, 56));
                 if (kind == 0 && cds.cbData >= 64 && Marshal.ReadInt32(cds.lpData, 40) == 5 &&
                     Environment.TickCount - answerUntil <= 0 && (uint)Marshal.ReadInt32(cds.lpData, 56) == answerPid)
                 {
@@ -202,7 +235,8 @@ static partial class Tiam
             Rec r = FindRec(hwnd, uid, g);
             if (msg == 0 || msg == 1)
             {
-                if (r == null)
+                bool created = r == null;
+                if (created)
                 {
                     if (hwnd == IntPtr.Zero) return;
                     r = new Rec(); recs.Add(r);
@@ -213,10 +247,11 @@ static partial class Tiam
                 if ((flags & 4) != 0) r.Tip = ReadTip(p, 32, 128);
                 // uVersion shares a union with the balloon timeout; without NIF_INFO a 3 or 4 there is the version
                 // the app is about to set (Qt re-adds after TaskbarCreated without calling NIM_SETVERSION again).
-                if ((flags & 0x10) == 0 && (ver == 3 || ver == 4)) r.Version = ver;
+                if ((flags & 0x10) == 0 && (ver == 3 || ver == 4)) SetVersion(r, ver);
+                else if (created) LoadVersion(r);
             }
             else if (msg == 2) { if (r != null) recs.Remove(r); }
-            else if (msg == 4) { if (r != null) r.Version = ver; }
+            else if (msg == 4) { if (r != null) SetVersion(r, ver); }
         }
     }
 

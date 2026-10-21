@@ -19,6 +19,7 @@ static partial class Tiam
     {
         public IntPtr Hwnd, HoverWnd, Thumb, ThumbSrc;
         public THUMBPROPS ThumbProps; public bool ThumbSet;
+        public int MaxClockW, ClockForR;
         public Sec Sec; public RECT Pos; public int Hover = -1; public bool Shown, Tracking, IgnoreNextLeftUp; public float Scale = 1;
     }
     enum Kind { Left, Right, Middle, Double }
@@ -30,6 +31,10 @@ static partial class Tiam
     static IntPtr msgWnd, hInst;
     static WndProcDelegate wndProc = WndProcImpl;
     static WndProcDelegate defProc = DefWindowProc;
+    static WinEventProc zorderProc = delegate (IntPtr hook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
+    {
+        foreach (var o in overlays.Values) if (o.Shown && TaskbarAbove(o)) ApplyVisibility(o);
+    };
     static bool log;
     static string logPath;
 
@@ -79,6 +84,9 @@ static partial class Tiam
         RefreshInstalledCopy();
 
         SetTimer(msgWnd, new IntPtr(1), 250, IntPtr.Zero);
+        // a click on a secondary taskbar brings it to the front: re-raise the bar on the z-order change, not on the next tick
+        SetWinEventHook(0x0003, 0x0003, IntPtr.Zero, zorderProc, 0, 0, 0);  // EVENT_SYSTEM_FOREGROUND
+        SetWinEventHook(0x8004, 0x8004, IntPtr.Zero, zorderProc, 0, 0, 0);  // EVENT_OBJECT_REORDER
         var t = new Thread(Worker);
         t.IsBackground = true;
         t.Start();
@@ -214,7 +222,12 @@ static partial class Tiam
             o.Sec = sec;
             o.Scale = (float)DpiOf(sec.Rect) / (cur.TrayHwnd != IntPtr.Zero ? DpiOf(cur.Tray) : 96u);
             int w = cur.Items.Count == 0 ? 0 : (int)Math.Round((cur.Items[cur.Items.Count - 1].Btn.R - cur.Items[0].Btn.L) * o.Scale);
-            var pos = new RECT(); pos.L = sec.ClockLeft - w; pos.T = sec.Rect.T; pos.R = sec.ClockLeft; pos.B = sec.Rect.B;
+            // the clock's width changes with the time text (seconds): anchor to the widest clock seen, so the bar holds still
+            int clockW = sec.Rect.R - sec.ClockLeft;
+            if (o.ClockForR != sec.Rect.R) { o.ClockForR = sec.Rect.R; o.MaxClockW = 0; }
+            if (clockW > o.MaxClockW) o.MaxClockW = clockW;
+            int anchor = sec.Rect.R - o.MaxClockW;
+            var pos = new RECT(); pos.L = anchor - w; pos.T = sec.Rect.T; pos.R = anchor; pos.B = sec.Rect.B;
             if (!Same(pos, o.Pos)) Log("layout scale=" + o.Scale + " pos=" + pos.L + "," + pos.T + "," + pos.R + "," + pos.B + " items=" + cur.Items.Count);
             bool moved = !Same(pos, o.Pos);
             o.Pos = pos;
@@ -291,6 +304,7 @@ static partial class Tiam
             SetWindowPos(o.Hwnd, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW);
             SetWindowPos(o.HoverWnd, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW);
         }
+        if (show != o.Shown) Log("bar " + (show ? "shown" : "hidden") + " (visible=" + o.Sec.Visible + " inPlace=" + inPlace + " items=" + cur.Items.Count + ")");
         o.Shown = show;
     }
 
@@ -396,11 +410,11 @@ static partial class Tiam
         var it = cur.Items[slot];
         RECT mirror = SlotRect(ov, slot);
         StartPopupWatch(ov, it.Btn, (mirror.L + mirror.R) / 2);
-        Rec r = it.Rec;
+        Rec r = it.Rec ?? RecByTip(it.Name);
         if (r != null && r.Callback != 0 && IsWindow(r.Hwnd))
         {
             PostClick(r, kind, mirror, ov);
-            Log("click " + kind + " '" + it.Name.Replace("\n", " ") + "' via callback v" + r.Version);
+            Log("click " + kind + " '" + it.Name.Replace("\n", " ") + "' via callback v" + (r.VersionKnown ? r.Version.ToString() : "? (sent as v" + EffectiveVersion(r) + ")"));
             return;
         }
         if ((kind == Kind.Left || kind == Kind.Double) && it.El != null)
@@ -425,6 +439,22 @@ static partial class Tiam
         Log("click " + kind + " '" + it.Name.Replace("\n", " ") + "' dropped: no callback known and the real tray is covered");
     }
 
+    // Unknown version: with uID 0 both formats put the event in the low word of lParam and differ only in wParam
+    // (uID 0 vs cursor point), so version 4 is the safer guess; version-4 apps then get their anchor point and
+    // NIN_SELECT/WM_CONTEXTMENU. With another uID the old format is the only one that carries the id.
+    static uint EffectiveVersion(Rec r) { return r.VersionKnown ? r.Version : (r.Uid == 0 ? 4u : 0u); }
+
+    // The UIA scan can miss the record match for a moment; the tooltip still identifies the icon.
+    static Rec RecByTip(string name)
+    {
+        string n = name.Trim();
+        if (n.Length == 0) return null;
+        lock (recLock)
+            foreach (var r in recs)
+                if (r.Callback != 0 && r.Tip.Trim().Length > 0 && n.Replace("\n", " ") == r.Tip.Trim().Replace("\n", " ")) return r;
+        return null;
+    }
+
     // Same message sequence Explorer sends for a mouse click on a notification icon.
     static void PostClick(Rec r, Kind kind, RECT mirror, Overlay ov)
     {
@@ -433,19 +463,22 @@ static partial class Tiam
         // for 3 s the hidden Shell_TrayWnd stands on the clicked taskbar, for apps that place popups from it
         answerRec = r; answerRect = mirror; answerPid = pid; answerTaskbar = ov.Sec.Rect; answerUntil = Environment.TickCount + 3000;
         SetWindowPos(hookWnd, HWND_TOPMOST, answerTaskbar.L, answerTaskbar.T, answerTaskbar.W, answerTaskbar.H, SWP_NOACTIVATE);
+        PreMoveHiddenPopups(pid, ov);
+        uint v = EffectiveVersion(r);
         POINT c; GetCursorPos(out c);
+        c.Y = Math.Min(c.Y, ov.Sec.Rect.T - 1); // version-4 anchor point: apps open menus upward from it, so keep it above the taskbar
         var seq = new List<uint>();
         switch (kind)
         {
-            case Kind.Left: seq.Add(WM_MOUSEMOVE); seq.Add(WM_LBUTTONDOWN); seq.Add(WM_LBUTTONUP); if (r.Version >= 3) seq.Add(NIN_SELECT); break;
-            case Kind.Right: seq.Add(WM_MOUSEMOVE); seq.Add(WM_RBUTTONDOWN); seq.Add(WM_RBUTTONUP); if (r.Version >= 3) seq.Add(WM_CONTEXTMENU); break;
+            case Kind.Left: seq.Add(WM_MOUSEMOVE); seq.Add(WM_LBUTTONDOWN); seq.Add(WM_LBUTTONUP); if (v >= 3) seq.Add(NIN_SELECT); break;
+            case Kind.Right: seq.Add(WM_MOUSEMOVE); seq.Add(WM_RBUTTONDOWN); seq.Add(WM_RBUTTONUP); if (v >= 3) seq.Add(WM_CONTEXTMENU); break;
             case Kind.Middle: seq.Add(WM_MBUTTONDOWN); seq.Add(WM_MBUTTONUP); break;
             case Kind.Double: seq.Add(WM_LBUTTONDBLCLK); seq.Add(WM_LBUTTONUP); break;
         }
         foreach (uint msg in seq)
         {
             IntPtr w, l;
-            if (r.Version >= 4)
+            if (v >= 4)
             {
                 w = new IntPtr((int)(((uint)(c.Y & 0xFFFF) << 16) | (uint)(c.X & 0xFFFF)));
                 l = new IntPtr((int)(((r.Uid & 0xFFFF) << 16) | msg));
@@ -453,6 +486,28 @@ static partial class Tiam
             else { w = new IntPtr((int)r.Uid); l = new IntPtr((int)msg); }
             PostMessage(r.Hwnd, r.Callback, w, l);
         }
+    }
+
+    // Apps like EarTrumpet show their flyout window at its last position for a frame before placing it. Move the
+    // app's hidden flyout-sized windows that last sat by the primary taskbar to the same spot by the clicked one.
+    static void PreMoveHiddenPopups(uint pid, Overlay ov)
+    {
+        RECT priMon = MonitorRect(cur.Tray, false), secMon = MonitorRect(ov.Sec.Rect, false);
+        int dx = secMon.R - priMon.R, dy = ov.Sec.Rect.T - cur.Tray.T;
+        EnumWindows(delegate (IntPtr h, IntPtr l)
+        {
+            uint p; GetWindowThreadProcessId(h, out p);
+            if (p != pid || IsWindowVisible(h)) return true;
+            RECT r; GetWindowRect(h, out r);
+            bool flyoutSized = r.W >= 40 && r.H >= 40 && r.W < 1000 && r.H < priMon.H;
+            bool byPrimaryTaskbar = r.R > priMon.L && r.L < priMon.R && r.B >= cur.Tray.T - 140 && r.B <= priMon.B + 400;
+            if (flyoutSized && byPrimaryTaskbar)
+            {
+                SetWindowPos(h, IntPtr.Zero, Math.Max(secMon.L, r.L + dx), r.T + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+                Log("pre-moved hidden " + ClassOf(h));
+            }
+            return true;
+        }, IntPtr.Zero);
     }
 
     static bool TrayVisibleAt(RECT btn)
