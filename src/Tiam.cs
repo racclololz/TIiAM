@@ -49,6 +49,7 @@ static partial class Tiam
     {
         bool created;
         var mtx = new Mutex(true, "Local\\TIiAM-single-instance", out created);
+        if (!created && ReplaceOlderCopy(mtx)) created = true;
         if (!created)
         {
             // starting it again opens the running copy's menu: Windows 11 often hides new tray icons behind "^"
@@ -63,6 +64,7 @@ static partial class Tiam
             return 0;
         }
         wmShowMenu = RegisterWindowMessage("Tiam-ShowMenu");
+        wmQuit = RegisterWindowMessage("Tiam-Quit");
         foreach (var a in args) if (a == "-log") log = true;
         logPath = Path.Combine(Path.GetTempPath(), "tiam.log");
         Log("start");

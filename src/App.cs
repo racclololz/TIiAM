@@ -8,8 +8,8 @@ using Microsoft.Win32;
 [assembly: AssemblyTitle("Tiam")]
 [assembly: AssemblyProduct("Tiam - tray icons on all monitors")]
 [assembly: AssemblyDescription("Shows the Windows 11 tray icons on every taskbar")]
-[assembly: AssemblyVersion("1.0.6.0")]
-[assembly: AssemblyFileVersion("1.0.6.0")]
+[assembly: AssemblyVersion("1.0.7.0")]
+[assembly: AssemblyFileVersion("1.0.7.0")]
 
 // The app's own tray icon and menu, "Start with Windows" (installs a copy under %LOCALAPPDATA%\Programs\Tiam),
 // and the first-run tip. The exe is portable: nothing is written until the user turns on Start with Windows.
@@ -18,7 +18,7 @@ static partial class Tiam
     const uint WM_TRAYICON = WM_APP + 1;
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run", AppKey = @"Software\Tiam";
     static IntPtr ownerWnd, appIcon;
-    static uint wmShowMenu;
+    static uint wmShowMenu, wmQuit;
     static bool iconAdded;
 
     static string SelfPath { get { return Path.GetFullPath(Assembly.GetExecutingAssembly().Location); } }
@@ -138,6 +138,32 @@ static partial class Tiam
         catch (Exception e) { Log("refresh install failed " + e.Message); }
     }
 
+    // Starting a newer version while an older one runs: the older one quits ("Tiam-Quit"; copies before 1.0.7 lack it
+    // and are killed after 3 s) and this copy takes over, so RefreshInstalledCopy then updates the autostart copy.
+    static bool ReplaceOlderCopy(System.Threading.Mutex mtx)
+    {
+        IntPtr other = FindWindowEx(IntPtr.Zero, IntPtr.Zero, "TiamWnd", "Tiam");
+        if (other == IntPtr.Zero) return false;
+        uint pid; GetWindowThreadProcessId(other, out pid);
+        Process p;
+        try
+        {
+            p = Process.GetProcessById((int)pid);
+            if (new Version(FileVersionInfo.GetVersionInfo(p.MainModule.FileName).FileVersion) >= Assembly.GetExecutingAssembly().GetName().Version) return false;
+        }
+        catch { return false; }
+        PostMessage(other, RegisterWindowMessage("Tiam-Quit"), IntPtr.Zero, IntPtr.Zero);
+        if (!p.WaitForExit(3000))
+        {
+            var d = new NOTIFYICONDATA();
+            d.cbSize = Marshal.SizeOf(typeof(NOTIFYICONDATA)); d.hWnd = other; d.uID = 1; d.szTip = ""; d.szInfo = ""; d.szInfoTitle = "";
+            Shell_NotifyIcon(2, ref d); // its icon would stay as a ghost
+            try { p.Kill(); p.WaitForExit(3000); } catch { return false; }
+        }
+        try { return mtx.WaitOne(3000); }
+        catch (System.Threading.AbandonedMutexException) { return true; }
+    }
+
     static void TryDeleteInstall()
     {
         try { if (Directory.Exists(InstallDir)) Directory.Delete(InstallDir, true); } catch (Exception e) { Log("delete install failed " + e.Message); }
@@ -195,6 +221,7 @@ static partial class Tiam
         }
         if (m == wmTaskbarCreated && wmTaskbarCreated != 0) { AddAppIcon(); return IntPtr.Zero; }
         if (m == wmShowMenu && wmShowMenu != 0) { ShowAppMenu(); return IntPtr.Zero; }
+        if (m == wmQuit && wmQuit != 0) { Quit(); return IntPtr.Zero; }
         return DefWindowProc(h, m, w, l);
     }
 }
